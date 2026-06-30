@@ -1,0 +1,1007 @@
+﻿<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>부품 도감 — 낙성대점</title>
+<style>
+:root{--bg:#0f0f0f;--surface:#1a1a1a;--card:#222;--border:#333;--primary:#f5f5f5;
+--accent:#4ecdc4;--accent2:#ff6b6b;--muted:#888;--radius:12px;--radius-sm:8px;
+--wb:#3b82f6;--dn:#8b5cf6;--it:#06b6d4;--common:#f59e0b;--vm:#ef4444;
+--lime:#a3e635}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+background:var(--bg);color:var(--primary);min-height:100vh;overflow-x:hidden}
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);
+background:var(--accent);color:var(--bg);padding:10px 24px;border-radius:24px;
+font-size:13px;font-weight:600;z-index:999;opacity:0;transition:opacity 0.3s;pointer-events:none}
+.toast.show{opacity:1}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div class="toast" id="toast"></div>
+<!--
+  부품 도감 (Parts Pokedex)
+  배경 제거(누끼) 기능: @imgly/background-removal (AGPL-3.0)
+    - 출처: https://github.com/imgly/background-removal-js
+    - 런타임에 esm.sh CDN에서 로드됨 (재배포 아님)
+-->
+<script>
+'use strict';
+
+// ═══ DEFAULT DATA ═══
+// 부품 데이터는 더 이상 코드에 하드코딩하지 않음.
+// 최초 사용 시 CSV 임포트로 데이터를 불러옴.
+// 관계 데이터만 초기값 유지 (부품 간 연관관계는 구조적 정보)
+const DEFAULT_PARTS=[];
+const DEFAULT_RELATIONS=[
+{from:"KS-WB-42",to:"KS-WB-04",type:"연관",desc:"점화 불량 시 함께 점검"},
+{from:"KS-WB-42",to:"KS-DN-19",type:"유사",desc:"둘 다 점화 계통"},
+{from:"KS-WB-43",to:"KS-WB-44",type:"세트",desc:"팬+팬모터 세트 교체 빈번"},
+{from:"KS-WB-05",to:"KS-WB-44",type:"연관",desc:"벨트 마모 시 팬모터 부하"},
+{from:"KS-DN-11",to:"KS-DN-12",type:"유사",desc:"ET1/ET2 팬모터 (기종별)"},
+{from:"KS-DN-11",to:"KS-DN-31",type:"연관",desc:"밸런싱 조정 필요 시"},
+{from:"KS-DN-25",to:"KS-DN-27",type:"연관",desc:"보드 교체 시 메인보드 확인"},
+{from:"KS-DN-09",to:"KS-DN-10",type:"유사",desc:"써모스탯 온도별 (110/180)"},
+{from:"KS-DN-22",to:"KS-DN-19",type:"연관",desc:"가스밸브 불량 → 이그니션 확인"},
+{from:"KS-WB-47",to:"KS-WB-48",type:"세트",desc:"디스플레이+터치보드 세트"},
+{from:"KS-WB-48",to:"KS-WB-49",type:"연관",desc:"보드 계통 함께 점검"},
+{from:"KS-DN-26",to:"KS-WB-03",type:"유사",desc:"배수밸브 (브랜드별)"},
+{from:"KS-DN-29",to:"KS-N-74",type:"유사",desc:"도어락 어셈블리 (브랜드별)"},
+{from:"KS-WB-01",to:"KS-N-88",type:"세트",desc:"에어댐퍼 스위치+본체"},
+{from:"KS-N-75",to:"KS-N-76",type:"세트",desc:"하이드림 모니터+PC"},
+{from:"KS-N-07",to:"KS-WB-52",type:"유사",desc:"세제펌프 (브랜드별)"},
+];
+
+// ═══ 기계 목록 (호환성 체크용) ═══
+const ALL_MACHINES=[
+  "우방 세탁기 20kg","우방 세탁기 30kg",
+  "우방 건조기 1단","우방 건조기 2단",
+  "다뉴브 세탁기 (공용)","다뉴브 건조기 ET1","다뉴브 건조기 ET2","다뉴브 세탁기 DNW",
+  "IT 키오스크","IT 카드단말기","IT 하이드림","IT 네트워크",
+  "자판기 멀티","자판기 일반",
+  "매장공용"
+];
+
+// ═══ DATA LAYER ═══
+function migratePart(p){
+  // machines 필드 없으면 기존 device/group에서 자동 추론
+  if(p.machines) return p;
+  const m=[];
+  if(p.brand==='우방'){
+    if(p.device==='건조기'){
+      if(p.group==='1단') m.push("우방 건조기 1단");
+      else if(p.group==='2단') m.push("우방 건조기 2단");
+      else {m.push("우방 건조기 1단");m.push("우방 건조기 2단");}
+    } else if(p.device==='세탁기'){
+      m.push("우방 세탁기 20kg");m.push("우방 세탁기 30kg");
+    } else if(p.group==='공용'||!p.device){
+      m.push("우방 세탁기 20kg");m.push("우방 세탁기 30kg");m.push("우방 건조기 1단");m.push("우방 건조기 2단");
+    }
+  } else if(p.brand==='다뉴브'){
+    if(p.device==='건조기'){
+      if(p.group==='ET1') m.push("다뉴브 건조기 ET1");
+      else if(p.group==='ET2') m.push("다뉴브 건조기 ET2");
+      else {m.push("다뉴브 건조기 ET1");m.push("다뉴브 건조기 ET2");}
+    } else if(p.device==='세탁기'){
+      if(p.group==='DNW') m.push("다뉴브 세탁기 DNW");
+      else m.push("다뉴브 세탁기 (공용)");
+    } else if(p.group==='공용'||!p.device){
+      m.push("다뉴브 세탁기 (공용)");m.push("다뉴브 건조기 ET1");m.push("다뉴브 건조기 ET2");
+    } else if(p.group==='DNW') m.push("다뉴브 세탁기 DNW");
+  } else if(p.brand==='IT'){
+    if(p.name.includes('하이드림')) m.push("IT 하이드림");
+    else if(p.name.includes('단말기')||p.name.includes('스마트로')) m.push("IT 카드단말기");
+    else if(p.name.includes('키오스크')||p.name.includes('모니터')) m.push("IT 키오스크");
+    else m.push("IT 네트워크");
+  } else if(p.brand==='자판기'){
+    if(p.group==='멀티') m.push("자판기 멀티");
+    else m.push("자판기 일반");
+  } else if(p.brand==='서비스'){
+    // 서비스/작업/민원 항목은 호환 기계 없음
+  } else {
+    m.push("매장공용");
+  }
+  p.machines=m;
+  return p;
+}
+function loadParts(){
+  const s=localStorage.getItem('pokedex_parts');
+  if(!s){
+    // 최초 실행: 빈 상태. 사용자가 CSV 임포트로 데이터 추가.
+    localStorage.setItem('pokedex_parts','[]');
+    return [];
+  }
+  let parts=safeParse(s,[]).map(migratePart);
+  return parts;
+}
+function saveParts(p){localStorage.setItem('pokedex_parts',JSON.stringify(p));}
+function safeParse(str,fallback){if(!str)return fallback;try{return JSON.parse(str);}catch(e){console.warn('JSON 파싱 실패, 기본값 사용:',e);return fallback;}}
+// XSS 방어: HTML에 삽입하는 사용자 데이터는 반드시 이 함수를 통과
+function esc(s){if(!s)return'';return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
+function loadRelations(){const s=localStorage.getItem('pokedex_relations');if(s){const parsed=safeParse(s,null);if(parsed)return parsed;}localStorage.setItem('pokedex_relations',JSON.stringify(DEFAULT_RELATIONS));return[...DEFAULT_RELATIONS];}
+function saveRelations(r){localStorage.setItem('pokedex_relations',JSON.stringify(r));}
+function getPhotos(id){
+  // 신규: 배열로 저장. 구버전 단일 'photo_' 호환 마이그레이션.
+  const arr=localStorage.getItem('photos_'+id);
+  if(arr){const parsed=safeParse(arr,null);if(parsed)return parsed;}
+  const old=localStorage.getItem('photo_'+id);
+  if(old){const a=[old];localStorage.setItem('photos_'+id,JSON.stringify(a));return a;}
+  return [];
+}
+function setPhotos(id,arr){localStorage.setItem('photos_'+id,JSON.stringify(arr));}
+function getPhoto(id){const a=getPhotos(id);return a.length?a[0]:'';} // 대표사진
+function setPhoto(id,d){const a=getPhotos(id);a.unshift(d);setPhotos(id,a);}
+function getMemo(id){return localStorage.getItem('memo_'+id)||'';}
+function setMemo(id,v){localStorage.setItem('memo_'+id,v);}
+function getSettings(){const s=localStorage.getItem('pokedex_settings');if(s){const parsed=safeParse(s,null);if(parsed)return parsed;}return{scriptUrl:'',driveFolder:'',location:'낙성대점'};}
+function saveSettingsData(s){localStorage.setItem('pokedex_settings',JSON.stringify(s));}
+// 수정 이력
+function addLog(id,action,detail){
+  const logs=safeParse(localStorage.getItem('pokedex_logs'),[]);
+  logs.push({id,action,detail,time:new Date().toISOString()});
+  if(logs.length>500) logs.splice(0,logs.length-500);
+  localStorage.setItem('pokedex_logs',JSON.stringify(logs));
+}
+function getLogs(id){
+  const logs=safeParse(localStorage.getItem('pokedex_logs'),[]);
+  return id?logs.filter(l=>l.id===id):logs;
+}
+
+// ═══ STATE ═══
+let PARTS=loadParts();
+let RELATIONS=loadRelations();
+let currentCat='전체';
+let currentView='index';
+let currentPart=null;
+let searchQuery='';
+let isComposing=false;
+let editMode=false;
+let photoSlide=0; // 현재 보고 있는 사진 인덱스
+
+// ═══ HELPERS ═══
+function brandCode(b){return{우방:'WB',다뉴브:'DN',IT:'IT',공용:'N',자판기:'VM',서비스:'SV'}[b]||'';}
+function labelName(p){const c=brandCode(p.brand);return c?c+' '+p.name:p.name;}
+function brandColor(b){return{우방:'var(--wb)',다뉴브:'var(--dn)',IT:'var(--it)',공용:'var(--common)',자판기:'var(--vm)',서비스:'#94a3b8'}[b]||'var(--muted)';}
+function fmt(v){if(!v||v==='실행가')return v||'-';const n=parseInt(v);return isNaN(n)?v:n.toLocaleString()+'원';}
+function getRelations(id){return RELATIONS.filter(r=>r.from===id||r.to===id).map(r=>({partnerId:r.from===id?r.to:r.from,type:r.type,desc:r.desc}));}
+function toast(msg){const t=document.getElementById('toast');if(!t)return;t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2000);}
+function filterParts(){
+  let list=[...PARTS];
+  if(currentCat!=='전체') list=list.filter(p=>p.brand===currentCat);
+  if(searchQuery){
+    const q=searchQuery.toLowerCase();
+    list=list.filter(p=>{
+      // 부품 식별 이름 조합: WB_공용_터치 보드, DN_ET1_팬모터 등
+      const brandCode={우방:'WB',다뉴브:'DN',IT:'IT',공용:'N',자판기:'VM',서비스:'SV'}[p.brand]||'';
+      const fullName=`${brandCode}_${p.group||''}_${p.name}`.toLowerCase();
+      return p.name.toLowerCase().includes(q)||
+        p.id.toLowerCase().includes(q)||
+        fullName.includes(q)||
+        (p.device&&p.device.toLowerCase().includes(q))||
+        (p.group&&p.group.toLowerCase().includes(q))||
+        (p.brand&&p.brand.toLowerCase().includes(q))||
+        (p.name_en&&p.name_en.toLowerCase().includes(q))||
+        (p.tags&&p.tags.toLowerCase().includes(q))||
+        (p.machines&&p.machines.some(m=>m.toLowerCase().includes(q)));
+    });
+  }
+  return list;
+}
+
+// ═══ NAVIGATION (브라우저 앞/뒤 지원) ═══
+function pushState(){
+  const state={view:currentView,partId:currentPart?currentPart.id:null,cat:currentCat};
+  history.pushState(state,'',' ');
+}
+function navigate(view, part){
+  currentView=view;
+  if(part) currentPart=part;
+  pushState();
+  render();
+  window.scrollTo(0,0);
+}
+function goBack(){
+  history.back();
+}
+function goHome(){
+  currentView='index';currentPart=null;currentCat='전체';searchQuery='';editMode=false;
+  pushState();render();window.scrollTo(0,0);
+}
+window.addEventListener('popstate',function(e){
+  if(e.state){
+    currentView=e.state.view||'index';
+    currentPart=e.state.partId?PARTS.find(x=>x.id===e.state.partId):null;
+    currentCat=e.state.cat||'전체';
+  } else {
+    currentView='index';currentPart=null;currentCat='전체';
+  }
+  editMode=false;
+  render();
+});
+function openDetail(id){
+  const p=PARTS.find(x=>x.id===id);
+  photoSlide=0;
+  if(p) navigate('detail',p);
+}
+// 초기 state 저장
+history.replaceState({view:'index',partId:null,cat:'전체'},'',' ');
+
+// ═══ MAIN RENDER ═══
+function render(){
+  const app=document.getElementById('app');
+  if(currentView==='detail'&&currentPart){renderDetail();return;}
+  
+  let html=`
+  <div style="background:var(--surface);border-bottom:1px solid var(--border);padding:14px 20px;position:sticky;top:0;z-index:100;display:flex;align-items:center;gap:12px">
+    <button onclick="goHome()" style="background:none;border:none;color:var(--accent);cursor:pointer;padding:4px 6px;line-height:1" title="홈"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12l9-9 9 9"/><path d="M5 10v10a1 1 0 001 1h3v-6h6v6h3a1 1 0 001-1V10"/></svg></button>
+    <h1 style="font-size:18px;font-weight:700;flex:1">📖 부품 <span style="color:var(--accent)">도감</span></h1>
+    <div style="font-size:12px;color:var(--muted)">${PARTS.length}개</div>
+  </div>
+  <div style="padding:12px 20px;background:var(--surface);border-bottom:1px solid var(--border)">
+    <input type="text" id="searchInput" value="${esc(searchQuery)}" placeholder="부품명, 영어, #태그, 코드로 검색..."
+      style="width:100%;padding:10px 16px;background:var(--bg);border:1.5px solid var(--border);border-radius:24px;color:var(--primary);font-size:14px;outline:none">
+  </div>
+  <div style="display:flex;gap:6px;padding:10px 20px;overflow-x:auto;background:var(--surface);border-bottom:1px solid var(--border)">
+    ${['index','map','manage','settings'].map(v=>{
+      const labels={index:'📋 인덱스',map:'🗺️ 관계도',manage:'📂 관리',settings:'⚙️ 설정'};
+      return `<button onclick="currentView='${v}';pushState();render()" style="padding:7px 14px;border-radius:20px;
+        border:1.5px solid ${currentView===v?'var(--accent)':'var(--border)'};
+        background:${currentView===v?'var(--accent)':'var(--bg)'};color:${currentView===v?'var(--bg)':'var(--muted)'};
+        font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap">${labels[v]}</button>`;
+    }).join('')}
+  </div>
+  <div style="display:flex;gap:8px;padding:10px 20px;overflow-x:auto;background:var(--surface);border-bottom:1px solid var(--border)">
+    ${['전체','우방','다뉴브','IT','공용','자판기','서비스'].map(c=>`
+      <button onclick="currentCat='${c}';render()" style="padding:6px 14px;border-radius:20px;border:1.5px solid ${currentCat===c?brandColor(c):'var(--border)'};
+        background:${currentCat===c?brandColor(c):'var(--bg)'};color:${currentCat===c?'#fff':'var(--muted)'};
+        font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap">${c}</button>
+    `).join('')}
+  </div>
+  <div id="listContainer">`;
+
+  if(currentView==='index') html+=renderIndexContent();
+  else if(currentView==='map') html+=renderMap();
+  else if(currentView==='manage') html+=renderManage();
+  else if(currentView==='settings') html+=renderSettings();
+
+  html+=`</div>`;
+  app.innerHTML=html;
+  bindSearch();
+  if(currentView==='map') setTimeout(initMap,50);
+}
+
+function bindSearch(){
+  const si=document.getElementById('searchInput');
+  if(!si) return;
+  let debounceTimer=null;
+  si.addEventListener('compositionstart',()=>{isComposing=true;});
+  si.addEventListener('compositionend',(e)=>{
+    isComposing=false;
+    searchQuery=e.target.value;
+    updateList();
+  });
+  si.addEventListener('input',(e)=>{
+    if(isComposing) return;
+    searchQuery=e.target.value;
+    clearTimeout(debounceTimer);
+    debounceTimer=setTimeout(updateList, 150);
+  });
+}
+// 검색 결과만 갱신 (전체 render 안함)
+function updateList(){
+  const container=document.getElementById('listContainer');
+  if(!container){render();return;}
+  if(currentView==='index') container.innerHTML=renderIndexContent();
+  else if(currentView==='manage') {render();return;}
+  else render();
+}
+
+// ═══ INDEX VIEW ═══
+function renderIndexContent(){
+  const parts=filterParts();
+  const groups={};
+  parts.forEach(p=>{const k=p.device||(p.brand?p.brand+' 공용':'기타');if(!groups[k])groups[k]=[];groups[k].push(p);});
+  let html='<div style="padding:16px 20px">';
+  const keys=Object.keys(groups).sort((a,b)=>a==='기타'?1:b==='기타'?-1:a.localeCompare(b));
+  if(!parts.length){
+    // 검색 중이면 "결과 없음", 아니면 "데이터 없음 → CSV 임포트 안내"
+    if(searchQuery){
+      html+=`<div style="text-align:center;padding:48px;color:var(--muted)"><div style="font-size:36px;margin-bottom:12px">🔍</div><div>검색 결과 없음</div></div>`;
+    } else if(PARTS.length===0){
+      html+=`<div style="text-align:center;padding:48px;color:var(--muted)">
+        <div style="font-size:48px;margin-bottom:12px">📦</div>
+        <div style="font-size:16px;font-weight:600;color:var(--primary);margin-bottom:8px">부품 데이터가 없습니다</div>
+        <div style="font-size:13px;margin-bottom:20px;line-height:1.6">상단 <b>📂 관리</b> 탭에서 CSV 파일을 임포트하거나<br>부품을 직접 추가해주세요.</div>
+        <button onclick="currentView='manage';pushState();render()" style="padding:10px 20px;background:var(--accent);color:var(--bg);border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer">📂 관리 탭으로 이동</button>
+      </div>`;
+    } else {
+      html+=`<div style="text-align:center;padding:48px;color:var(--muted)"><div style="font-size:36px;margin-bottom:12px">🔍</div><div>검색 결과 없음</div></div>`;
+    }
+  } else {
+    keys.forEach(key=>{
+      const items=groups[key].sort((a,b)=>a.name.localeCompare(b.name));
+      const icon=key==='건조기'?'🔥':key==='세탁기'?'💧':key==='IT장비'?'💻':key==='자판기'?'🎰':'📦';
+      html+=`<div style="margin-bottom:24px">
+        <div style="font-size:11px;font-weight:700;color:var(--muted);letter-spacing:1px;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
+          <span>${icon}</span><span>${key}</span>
+          <span style="margin-left:auto;font-size:10px;color:var(--border)">${items.length}개</span>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:8px">`;
+      items.forEach(p=>{
+        const hasMemo=getMemo(p.id)?'💬':'';
+        const hasPhoto=getPhoto(p.id)?'📷':'';
+        const rels=getRelations(p.id);
+        const relDot=rels.length?`<span style="width:5px;height:5px;border-radius:50%;background:var(--accent);display:inline-block;margin-left:3px"></span>`:'';
+        html+=`<div onclick="openDetail('${p.id}')" style="padding:6px 14px;border-radius:24px;
+          border:1.5px solid var(--accent);background:transparent;color:var(--accent);
+          font-size:12px;font-weight:400;cursor:pointer;display:inline-flex;align-items:center;gap:5px;
+          transition:all 0.15s;white-space:nowrap"
+          onmouseover="this.style.background='rgba(78,205,196,0.1)';this.style.transform='scale(1.03)'"
+          onmouseout="this.style.background='transparent';this.style.transform='scale(1)'">
+          ${brandCode(p.brand)?`<span style="opacity:0.5;font-size:10px">${esc(brandCode(p.brand))}</span> `:''}${esc(p.name)}${hasPhoto}${hasMemo}${relDot}
+        </div>`;
+      });
+      html+=`</div></div>`;
+    });
+  }
+  html+='</div>';
+  return html;
+}
+
+// ═══ DETAIL VIEW (OP.GG 스타일 2컬럼) ═══
+function renderDetail(){
+  const p=currentPart;
+  if(!p) return;
+  const memo=getMemo(p.id);
+  const photos=getPhotos(p.id);
+  const photo=photos.length?photos[0]:'';
+  const rels=getRelations(p.id);
+  const logs=getLogs(p.id).slice(-5).reverse();
+
+  let relHtml='';
+  if(rels.length){
+    relHtml=`<div class="dex-section"><div class="dex-section-title">🔗 연관 부품</div><div style="display:flex;flex-direction:column;gap:6px">`;
+    rels.forEach(r=>{
+      const partner=PARTS.find(x=>x.id===r.partnerId);if(!partner)return;
+      const tc={세트:'#4ecdc4',연관:'#f59e0b',유사:'#8b5cf6'};
+      relHtml+=`<div onclick="openDetail('${r.partnerId}')" style="padding:8px 12px;background:var(--bg);border-radius:8px;border:1px solid var(--border);display:flex;align-items:center;gap:8px;cursor:pointer;transition:border-color 0.2s" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+        <span style="font-size:9px;padding:2px 6px;border-radius:8px;font-weight:700;background:${tc[r.type]||'var(--muted)'};color:var(--bg)">${r.type}</span>
+        <span style="font-size:12px;font-weight:500;flex:1">${esc(partner.name)}</span>
+        <span style="font-size:10px;color:var(--muted)">${partner.brand}</span><span style="color:var(--muted);font-size:10px">→</span>
+      </div>`;
+    });
+    relHtml+=`</div></div>`;
+  }
+
+  let logHtml='';
+  if(logs.length){
+    logHtml=`<div style="margin-top:12px;font-size:10px;color:var(--border)">`;
+    logs.forEach(l=>{const t=new Date(l.time);logHtml+=`<div>${t.toLocaleDateString()} ${t.toLocaleTimeString().slice(0,5)} — ${l.action}</div>`;});
+    logHtml+=`</div>`;
+  }
+
+  const app=document.getElementById('app');
+  app.innerHTML=`
+  <style>
+    .dex-header{background:var(--surface);border-bottom:1px solid var(--border);padding:12px 20px;position:sticky;top:0;z-index:100;display:flex;align-items:center;gap:10px}
+    .dex-layout{display:flex;gap:0;max-width:1080px;margin:24px auto;width:calc(100% - 40px);background:var(--surface);border:1px solid var(--border);border-radius:16px;overflow:hidden}
+    .dex-left{flex:0 0 44%;background:var(--card);display:flex;flex-direction:column;padding:28px;position:relative;border-right:1px solid var(--border)}
+    .dex-right{flex:1;padding:28px}
+    .dex-breadcrumb{font-size:13px;color:var(--muted);margin-bottom:12px}
+    .dex-breadcrumb b{color:var(--primary);font-weight:600}
+    .dex-photo{width:100%;aspect-ratio:1;border-radius:16px;background:var(--card);display:flex;align-items:center;justify-content:center;overflow:hidden;cursor:pointer;border:1px solid var(--border);position:relative}
+    .dex-photo img{width:100%;height:100%;object-fit:contain;border-radius:16px}
+    .dex-photo-num{position:absolute;top:14px;left:16px;font-size:15px;font-weight:700;color:var(--muted)}
+    .dex-badges{display:flex;flex-wrap:wrap;gap:6px;margin-top:18px}
+    .dex-badge{padding:5px 14px;border-radius:8px;font-size:13px;font-weight:600;color:#fff}
+    .dex-name{font-size:26px;font-weight:700;margin-top:14px}
+    .dex-name-en{font-size:14px;color:var(--muted);margin-top:2px}
+    .dex-desc{font-size:15px;color:#cfcfcf;line-height:1.6;margin-top:12px}
+    .dex-section{margin-bottom:22px}
+    .dex-section-title{font-size:14px;font-weight:700;color:var(--accent);letter-spacing:0.3px;margin-bottom:10px}
+    .dex-info-row{display:flex;align-items:center;padding:9px 0;border-bottom:1px solid var(--border);font-size:15px}
+    .dex-info-row:last-child{border-bottom:none}
+    .dex-info-label{color:var(--muted);width:100px;flex-shrink:0;font-size:13px}
+    .dex-info-value{flex:1;font-weight:500}
+    .dex-pills{display:flex;flex-wrap:wrap;gap:7px}
+    .dex-pill{padding:6px 14px;border-radius:16px;font-size:14px;background:rgba(78,205,196,0.08);color:var(--accent);border:1px solid rgba(78,205,196,0.25)}
+    @media(max-width:680px){
+      .dex-layout{flex-direction:column}
+      .dex-left{flex:none;max-width:none;padding:24px 20px;border-right:none;border-bottom:1px solid var(--border)}
+      .dex-right{max-height:none}
+    }
+  </style>
+
+  <div class="dex-header">
+    <button onclick="goBack()" style="background:none;border:none;color:var(--accent);font-size:20px;cursor:pointer;line-height:1">←</button>
+    <button onclick="goHome()" style="background:none;border:none;color:var(--accent);cursor:pointer;line-height:1"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12l9-9 9 9"/><path d="M5 10v10a1 1 0 001 1h3v-6h6v6h3a1 1 0 001-1V10"/></svg></button>
+    <span style="flex:1;font-size:14px;font-weight:600">${esc(p.name)}</span>
+  </div>
+
+  <div class="dex-layout">
+    <!-- 왼쪽: 사진 + 넘버 + 특성(기기) + 이름 + 설명 -->
+    <div class="dex-left">
+      <div class="dex-breadcrumb"><b>${p.id}</b> &nbsp;·&nbsp; ${p.brand}</div>
+      ${(()=>{ if(photoSlide>=photos.length) photoSlide=Math.max(0,photos.length-1); return ''; })()}
+      <div class="dex-photo">
+        <div class="dex-photo-num">${p.id}</div>
+        ${photos.length?`
+          <img src="${photos[photoSlide]}">
+          ${photos.length>1?`
+            <button onclick="slidePhoto(-1)" style="position:absolute;top:50%;left:8px;transform:translateY(-50%);width:34px;height:34px;border-radius:50%;background:rgba(0,0,0,0.55);color:#fff;border:none;font-size:18px;cursor:pointer;line-height:1">‹</button>
+            <button onclick="slidePhoto(1)" style="position:absolute;top:50%;right:8px;transform:translateY(-50%);width:34px;height:34px;border-radius:50%;background:rgba(0,0,0,0.55);color:#fff;border:none;font-size:18px;cursor:pointer;line-height:1">›</button>
+            <div style="position:absolute;bottom:10px;left:50%;transform:translateX(-50%);display:flex;gap:5px">
+              ${photos.map((_,i)=>`<span onclick="goSlide(${i})" style="width:7px;height:7px;border-radius:50%;cursor:pointer;background:${i===photoSlide?'var(--accent)':'rgba(255,255,255,0.4)'}"></span>`).join('')}
+            </div>`:''}
+          <div style="position:absolute;top:10px;right:12px;font-size:11px;color:#fff;background:rgba(0,0,0,0.55);padding:3px 8px;border-radius:10px">${photoSlide+1} / ${photos.length}${photoSlide===0?' · 대표':''}</div>
+        `:`<div onclick="document.getElementById('photoInput').click()" style="text-align:center;color:var(--muted);cursor:pointer;width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center"><div style="font-size:48px;margin-bottom:8px">📷</div><div style="font-size:13px">사진 등록</div></div>`}
+      </div>
+      <input type="file" id="photoInput" accept="image/*" capture="environment" style="display:none" onchange="handlePhotoUpload(this)">
+      ${photos.length?`<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;align-items:center">
+        <button onclick="document.getElementById('photoInput').click()" style="padding:6px 12px;background:var(--accent);color:var(--bg);border:none;border-radius:14px;font-size:12px;font-weight:600;cursor:pointer">📷 추가</button>
+        ${photoSlide!==0?`<button onclick="setRepresentative(${photoSlide})" style="padding:6px 12px;background:transparent;color:var(--accent);border:1px solid var(--accent);border-radius:14px;font-size:12px;cursor:pointer">⭐ 대표로</button>`:''}
+        <button onclick="removeBg(${photoSlide})" style="padding:6px 12px;background:transparent;color:var(--accent);border:1px solid var(--accent);border-radius:14px;font-size:12px;cursor:pointer">✂ 누끼</button>
+        <button onclick="deletePhoto(${photoSlide})" style="padding:6px 12px;background:transparent;color:var(--accent2);border:1px solid var(--accent2);border-radius:14px;font-size:12px;cursor:pointer">✕ 삭제</button>
+      </div>`:''}
+      <div class="dex-badges">
+        ${p.device?`<span class="dex-badge" style="background:var(--accent)">${p.device}</span>`:''}
+        <span class="dex-badge" style="background:${brandColor(p.brand)}">${p.brand}</span>
+        ${p.group?`<span class="dex-badge" style="background:var(--card);color:var(--muted);border:1px solid var(--border)">${p.group}</span>`:''}
+      </div>
+      <div class="dex-name">${esc(p.name)}</div>
+      ${p.name_en?`<div class="dex-name-en">${esc(p.name_en)}</div>`:''}
+      <div class="dex-desc">${p.desc?esc(p.desc):'<span style="color:var(--muted);font-style:italic">설명 없음 — 수정에서 추가하세요</span>'}</div>
+    </div>
+
+    <!-- 오른쪽: 정보 -->
+    <div class="dex-right" style="position:relative">
+      <button onclick="toggleEdit()" style="position:absolute;top:18px;right:18px;padding:5px 14px;border-radius:14px;border:1px solid ${editMode?'var(--accent2)':'var(--border)'};background:${editMode?'var(--accent2)':'transparent'};color:${editMode?'#fff':'var(--muted)'};font-size:12px;cursor:pointer;z-index:5">${editMode?'편집중':'✏️ 수정'}</button>
+      ${editMode?renderEditForm(p):`
+      <!-- 별칭/태그 -->
+      ${p.tags&&p.tags.trim()?`<div class="dex-section">
+        <div class="dex-section-title">🏷 별칭 / 태그</div>
+        <div class="dex-pills">
+          ${p.tags.split(/\s+/).filter(t=>t).map(t=>`<span class="dex-pill">${esc(t)}</span>`).join('')}
+        </div>
+      </div>`:''}
+      <!-- 호환 기계 -->
+      <div class="dex-section">
+        <div class="dex-section-title">🔧 호환 기계</div>
+        <div class="dex-pills">
+          ${(p.machines||[]).length?p.machines.map(m=>`<span class="dex-pill">${m}</span>`).join(''):`<span style="font-size:14px;color:var(--muted)">미지정</span>`}
+        </div>
+      </div>
+
+      <!-- 가격 -->
+      <div class="dex-section">
+        <div class="dex-section-title">💰 가격</div>
+        <div class="dex-info-row"><span class="dex-info-label">실행가</span><span class="dex-info-value" style="color:var(--accent)">${fmt(p.price_exec)}</span></div>
+        <div class="dex-info-row"><span class="dex-info-label">청구가</span><span class="dex-info-value" style="color:var(--accent2)">${fmt(p.price_bill)}</span></div>
+        ${p.sap?`<div class="dex-info-row"><span class="dex-info-label">SAP</span><span class="dex-info-value" style="font-size:14px;color:var(--muted)">${p.sap}</span></div>`:''}
+      </div>
+
+      <!-- 기본 정보 -->
+      <div class="dex-section">
+        <div class="dex-section-title">📋 상세</div>
+        <div class="dex-info-row"><span class="dex-info-label">기기</span><span class="dex-info-value">${p.device||'-'}</span></div>
+        <div class="dex-info-row"><span class="dex-info-label">그룹/기종</span><span class="dex-info-value">${p.group||'-'}</span></div>
+      </div>
+
+      <!-- 연관 부품 -->
+      ${relHtml}
+
+      <!-- 메모 -->
+      <div class="dex-section" style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border)">
+        <div class="dex-section-title">💬 메모</div>
+        <textarea id="memoArea" placeholder="에러 증상, 교체 팁, 주의사항..." style="width:100%;min-height:80px;padding:12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--primary);font-size:15px;resize:vertical;outline:none">${esc(memo)}</textarea>
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <button onclick="saveMemoAction()" style="padding:9px 18px;background:var(--accent);color:var(--bg);border:none;border-radius:6px;font-size:14px;font-weight:600;cursor:pointer">저장</button>
+          <button onclick="syncCurrentToSheet()" style="padding:9px 18px;background:transparent;color:var(--accent);border:1px solid var(--accent);border-radius:6px;font-size:14px;cursor:pointer">📤 시트</button>
+        </div>
+      </div>
+      ${logHtml}
+      `}
+    </div>
+  </div>`;
+}
+
+// ═══ EDIT FORM ═══
+function renderEditForm(p){
+  return `<div style="margin-top:20px;background:var(--card);border:1px solid var(--accent2);border-radius:12px;padding:16px">
+    <div style="font-size:13px;font-weight:700;color:var(--accent2);margin-bottom:12px">✏️ 부품 정보 수정</div>
+    <div style="margin-bottom:10px;padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:8px">
+      <div style="font-size:11px;color:var(--muted);margin-bottom:4px">부품 코드 (ID) — 변경 시 사진/메모/관계도 자동 이전됨</div>
+      <input id="e_id" value="${esc(p.id)}" placeholder="KS-WB-01" style="width:100%;padding:8px 10px;background:var(--surface);border:1px solid var(--accent2);border-radius:6px;color:var(--accent2);font-size:14px;font-weight:600">
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+      <div><div style="font-size:11px;color:var(--muted);margin-bottom:4px">부품명</div>
+        <input id="e_name" value="${esc(p.name)}" style="width:100%;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--primary);font-size:13px"></div>
+      <div><div style="font-size:11px;color:var(--muted);margin-bottom:4px">영어 이름</div>
+        <input id="e_name_en" value="${esc(p.name_en||'')}" placeholder="English name" style="width:100%;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--primary);font-size:13px"></div>
+      <div><div style="font-size:11px;color:var(--muted);margin-bottom:4px">브랜드</div>
+        <select id="e_brand" style="width:100%;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--primary);font-size:13px">
+          ${['우방','다뉴브','IT','공용','자판기','서비스'].map(b=>`<option ${p.brand===b?'selected':''}>${b}</option>`).join('')}
+        </select></div>
+      <div><div style="font-size:11px;color:var(--muted);margin-bottom:4px">그룹/기종</div>
+        <input id="e_group" value="${esc(p.group||'')}" style="width:100%;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--primary);font-size:13px"></div>
+      <div><div style="font-size:11px;color:var(--muted);margin-bottom:4px">기기</div>
+        <select id="e_device" style="width:100%;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--primary);font-size:13px">
+          <option value="" ${!p.device?'selected':''}>선택 안함</option>
+          ${['건조기','세탁기','IT장비','자판기'].map(d=>`<option ${p.device===d?'selected':''}>${d}</option>`).join('')}
+        </select></div>
+      <div><div style="font-size:11px;color:var(--muted);margin-bottom:4px">SAP 코드</div>
+        <input id="e_sap" value="${esc(p.sap||'')}" style="width:100%;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--primary);font-size:13px"></div>
+      <div><div style="font-size:11px;color:var(--muted);margin-bottom:4px">실행가</div>
+        <input id="e_exec" value="${esc(p.price_exec||'')}" style="width:100%;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--primary);font-size:13px"></div>
+      <div><div style="font-size:11px;color:var(--muted);margin-bottom:4px">청구가</div>
+        <input id="e_bill" value="${esc(p.price_bill||'')}" style="width:100%;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--primary);font-size:13px"></div>
+    </div>
+    <div style="margin-bottom:8px"><div style="font-size:11px;color:var(--muted);margin-bottom:4px">#태그 (스페이스 구분, #포함)</div>
+      <input id="e_tags" value="${esc(p.tags||'')}" placeholder="#별칭1 #현장용어 #드레인" style="width:100%;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--accent);font-size:13px"></div>
+    <div style="margin-bottom:8px"><div style="font-size:11px;color:var(--muted);margin-bottom:4px">📝 설명 (어떤 기계에 쓰이는지, 용도 등)</div>
+      <textarea id="e_desc" placeholder="예: 건조기 점화 시 사용. 점화 불량 에러 시 우선 교체." style="width:100%;min-height:70px;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--primary);font-size:13px;resize:vertical">${esc(p.desc||'')}</textarea></div>
+    <div style="margin-bottom:12px"><div style="font-size:11px;color:var(--muted);margin-bottom:6px">🔧 호환 기계 (해당 항목 체크)</div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px">
+        ${ALL_MACHINES.map(m=>{
+          const checked=(p.machines||[]).includes(m);
+          return `<label style="padding:4px 10px;border-radius:14px;font-size:11px;cursor:pointer;display:flex;align-items:center;gap:4px;border:1px solid ${checked?'var(--accent)':'var(--border)'};background:${checked?'rgba(78,205,196,0.1)':'transparent'};color:${checked?'var(--accent)':'var(--muted)'}">
+            <input type="checkbox" class="machineChk" value="${m}" ${checked?'checked':''} style="width:12px;height:12px;accent-color:var(--accent)">${m}</label>`;
+        }).join('')}
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:12px">
+      <button onclick="saveEdit()" style="padding:10px 20px;background:var(--accent2);color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">💾 저장</button>
+      <button onclick="editMode=false;renderDetail()" style="padding:10px 20px;background:var(--bg);color:var(--muted);border:1px solid var(--border);border-radius:8px;font-size:13px;cursor:pointer">취소</button>
+    </div>
+  </div>`;
+}
+
+function toggleEdit(){
+  editMode=!editMode;
+  renderDetail();
+}
+
+function saveEdit(){
+  if(!currentPart) return;
+  const idx=PARTS.findIndex(x=>x.id===currentPart.id);
+  if(idx<0) return;
+  const oldId=currentPart.id;
+  const newId=document.getElementById('e_id').value.trim();
+  // ID 유효성 검사
+  if(!newId){toast('코드(ID)를 입력해주세요');return;}
+  if(newId!==oldId && PARTS.some(p=>p.id===newId)){toast('이미 존재하는 코드입니다: '+newId);return;}
+  const changes=[];
+  const nv={
+    name:document.getElementById('e_name').value.trim(),
+    name_en:document.getElementById('e_name_en').value.trim(),
+    brand:document.getElementById('e_brand').value,
+    group:document.getElementById('e_group').value.trim(),
+    device:document.getElementById('e_device').value,
+    sap:document.getElementById('e_sap').value.trim(),
+    price_exec:document.getElementById('e_exec').value.trim(),
+    price_bill:document.getElementById('e_bill').value.trim(),
+    tags:document.getElementById('e_tags').value.trim(),
+    desc:document.getElementById('e_desc').value.trim(),
+  };
+  // 기계 호환성 체크박스
+  const machineChks=document.querySelectorAll('.machineChk');
+  const newMachines=[...machineChks].filter(c=>c.checked).map(c=>c.value);
+  const oldMachines=(PARTS[idx].machines||[]).join(',');
+  const newMachinesStr=newMachines.join(',');
+  if(oldMachines!==newMachinesStr) changes.push(`호환기계 변경`);
+  nv.machines=newMachines;
+  // ID 변경 처리: 사진/메모/관계 이전
+  if(newId!==oldId){
+    changes.push(`코드 변경: ${oldId} → ${newId}`);
+    // 사진 이전
+    const photos=localStorage.getItem('photos_'+oldId);
+    if(photos){localStorage.setItem('photos_'+newId,photos);localStorage.removeItem('photos_'+oldId);}
+    // 메모 이전
+    const memo=localStorage.getItem('memo_'+oldId);
+    if(memo){localStorage.setItem('memo_'+newId,memo);localStorage.removeItem('memo_'+oldId);}
+    // 관계도 업데이트
+    RELATIONS.forEach(r=>{
+      if(r.from===oldId) r.from=newId;
+      if(r.to===oldId) r.to=newId;
+    });
+    saveRelations(RELATIONS);
+    // 부품 ID 변경
+    PARTS[idx].id=newId;
+  }
+  // 변경점 추적
+  for(const k of Object.keys(nv)){
+    if(k==='machines') continue;
+    const old=PARTS[idx][k]||'';
+    if(nv[k]!==old) changes.push(`${k}: ${old||'(없음)'} → ${nv[k]||'(없음)'}`);
+  }
+  Object.assign(PARTS[idx],nv);
+  saveParts(PARTS);
+  if(changes.length) addLog(newId,'수정',changes.join(', '));
+  currentPart=PARTS[idx];
+  editMode=false;
+  toast('수정 완료 ✓');
+  renderDetail();
+}
+
+// ═══ MANAGE VIEW ═══
+function renderManage(){
+  const parts=filterParts();
+  return `<div style="padding:16px 20px">
+    <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">
+      <button onclick="document.getElementById('addFormWrap').style.display='block'" style="padding:8px 16px;background:var(--accent);color:var(--bg);border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">+ 부품 추가</button>
+      <button onclick="document.getElementById('csvInput').click()" style="padding:8px 16px;background:var(--surface);color:var(--primary);border:1px solid var(--border);border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">📥 CSV 임포트</button>
+      <button onclick="exportCSV()" style="padding:8px 16px;background:var(--surface);color:var(--primary);border:1px solid var(--border);border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">📤 CSV 내보내기</button>
+      <input type="file" id="csvInput" accept=".csv" style="display:none" onchange="handleCSVImport(this.files[0])">
+    </div>
+    <div id="addFormWrap" style="display:none;background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:16px">
+      <div style="font-size:14px;font-weight:700;margin-bottom:12px">새 부품 등록</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+        <input id="addName" placeholder="부품명 *" style="padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--primary);font-size:13px">
+        <input id="addNameEn" placeholder="영어이름" style="padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--primary);font-size:13px">
+        <select id="addBrand" style="padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--primary);font-size:13px">
+          <option value="우방">우방</option><option value="다뉴브">다뉴브</option><option value="IT">IT</option><option value="공용">공용</option><option value="자판기">자판기</option><option value="서비스">서비스</option></select>
+        <select id="addDevice" style="padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--primary);font-size:13px">
+          <option value="">기기 선택</option><option>건조기</option><option>세탁기</option><option>IT장비</option><option>자판기</option></select>
+        <input id="addGroup" placeholder="그룹 (공용, ET1 등)" style="padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--primary);font-size:13px">
+        <input id="addTags" placeholder="#태그1 #태그2" style="padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--accent);font-size:13px">
+        <input id="addExec" placeholder="실행가" style="padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--primary);font-size:13px">
+        <input id="addBill" placeholder="청구가" style="padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--primary);font-size:13px">
+      </div>
+      <div style="display:flex;gap:8px">
+        <button onclick="addPart()" style="padding:8px 16px;background:var(--accent);color:var(--bg);border:none;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer">등록</button>
+        <button onclick="document.getElementById('addFormWrap').style.display='none'" style="padding:8px 16px;background:var(--bg);color:var(--muted);border:1px solid var(--border);border-radius:6px;font-size:13px;cursor:pointer">취소</button>
+      </div>
+    </div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:8px">필터 적용: ${parts.length}개 (전체 ${PARTS.length}개)</div>
+    <div style="display:flex;flex-direction:column;gap:4px;max-height:60vh;overflow-y:auto">
+      ${parts.map(p=>`
+        <div style="padding:8px 12px;background:var(--card);border-radius:6px;border:1px solid var(--border);display:flex;align-items:center;gap:8px;font-size:13px">
+          <span style="width:8px;height:8px;border-radius:50%;background:${brandColor(p.brand)}"></span>
+          <span style="color:var(--accent);font-size:12px;font-weight:600;min-width:75px">${p.id}</span>
+          <span onclick="openDetail('${p.id}')" style="flex:1;font-weight:500;cursor:pointer;color:var(--primary)">${esc(p.name)}</span>
+          <span style="color:var(--muted);font-size:11px">${p.brand}</span>
+          <button onclick="event.stopPropagation();deletePart('${p.id}')" style="background:none;border:none;color:var(--accent2);cursor:pointer;font-size:14px" title="삭제">✕</button>
+        </div>`).join('')}
+    </div>
+  </div>`;
+}
+
+// ═══ SETTINGS VIEW ═══
+function renderSettings(){
+  const s=getSettings();
+  return `<div style="padding:20px;display:flex;flex-direction:column;gap:16px">
+    <div style="font-size:16px;font-weight:700">⚙️ 설정</div>
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px">
+      <div style="font-size:13px;font-weight:600;color:var(--muted);margin-bottom:6px">Apps Script URL</div>
+      <input id="setUrl" value="${s.scriptUrl}" placeholder="https://script.google.com/macros/s/.../exec" style="width:100%;padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--primary);font-size:13px">
+    </div>
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px">
+      <div style="font-size:13px;font-weight:600;color:var(--muted);margin-bottom:6px">구글 드라이브 폴더 ID</div>
+      <input id="setFolder" value="${s.driveFolder}" placeholder="1BxiMV..." style="width:100%;padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--primary);font-size:13px">
+    </div>
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px">
+      <div style="font-size:13px;font-weight:600;color:var(--muted);margin-bottom:6px">매장명</div>
+      <input id="setLocation" value="${s.location}" style="width:100%;padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--primary);font-size:13px">
+    </div>
+    <button onclick="saveSettingsAction()" style="padding:12px;background:var(--accent);color:var(--bg);border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer">설정 저장</button>
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px">
+      <div style="font-size:13px;font-weight:700;color:var(--accent);margin-bottom:10px">🔌 구글 시트 연동</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button onclick="testConnection()" style="padding:9px 16px;background:transparent;color:var(--accent);border:1px solid var(--accent);border-radius:6px;font-size:13px;font-weight:600;cursor:pointer">연결 테스트</button>
+        <button onclick="bulkSyncToSheet()" style="padding:9px 16px;background:var(--accent);color:var(--bg);border:none;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer">전체 부품 → 시트 동기화</button>
+      </div>
+      <div style="font-size:11px;color:var(--muted);margin-top:8px;line-height:1.6">먼저 URL 입력 → 설정 저장 → 연결 테스트로 확인 → 전체 동기화</div>
+    </div>
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px">
+      <div style="font-size:13px;font-weight:700;color:var(--accent2);margin-bottom:8px">⚠️ 데이터</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button onclick="if(confirm('초기화?')){localStorage.clear();PARTS=loadParts();RELATIONS=loadRelations();render();toast('초기화 완료');}" style="padding:8px 14px;background:var(--bg);color:var(--accent2);border:1px solid var(--accent2);border-radius:6px;font-size:12px;cursor:pointer">🗑 초기화</button>
+        <button onclick="exportCSV()" style="padding:8px 14px;background:var(--bg);color:var(--primary);border:1px solid var(--border);border-radius:6px;font-size:12px;cursor:pointer">📤 백업 CSV</button>
+      </div>
+    </div>
+    <div style="background:var(--surface);border-radius:12px;padding:16px;font-size:12px;color:var(--muted);line-height:1.8">
+      <strong style="color:var(--primary)">📌 데이터 흐름</strong><br>
+      • 데이터 = 브라우저 localStorage<br>
+      • CSV 임포트 → 도감 자동 추가<br>
+      • 부품 수정 → 변경 이력 자동 기록<br>
+      • 구글 시트 동기화 = 수동 "📤 시트 동기화" 버튼<br>
+      • 사진 = 로컬 저장 + 드라이브 업로드 (설정 시)<br><br>
+      <strong style="color:var(--primary)">🔍 검색 팁</strong><br>
+      • 부품명, 영어이름, #태그, 코드(KS-WB-01) 모두 검색 가능<br>
+      • #태그는 작업자별 별칭 등록용 (#물빠짐 #드레인밸브)
+    </div>
+  </div>`;
+}
+
+// ═══ MAP VIEW ═══
+function renderMap(){
+  return `<div style="padding:20px">
+    <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px">
+      <div style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#4ecdc4"></span>세트</div>
+      <div style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#f59e0b"></span>연관</div>
+      <div style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#8b5cf6"></span>유사</div>
+    </div>
+    <div id="mapCanvas" style="width:100%;min-height:500px;background:var(--surface);border-radius:12px;border:1px solid var(--border);position:relative;overflow:hidden"></div>
+  </div>`;
+}
+function initMap(){
+  const canvas=document.getElementById('mapCanvas');if(!canvas)return;
+  const parts=filterParts();const ids=new Set(parts.map(p=>p.id));
+  const rels=RELATIONS.filter(r=>ids.has(r.from)||ids.has(r.to));
+  const nodeIds=new Set();rels.forEach(r=>{nodeIds.add(r.from);nodeIds.add(r.to);});
+  const nodes=[...nodeIds].map(id=>PARTS.find(p=>p.id===id)).filter(Boolean);
+  if(!nodes.length){canvas.innerHTML=`<div style="display:flex;align-items:center;justify-content:center;height:300px;color:var(--muted);text-align:center"><div><div style="font-size:36px;margin-bottom:8px">🗺️</div><div>연관 관계 없음</div></div></div>`;return;}
+  const w=canvas.offsetWidth||600,cx=w/2,cy=260,radius=Math.min(cx-80,200);
+  const pos={};
+  nodes.forEach((p,i)=>{const a=(2*Math.PI*i/nodes.length)-(Math.PI/2);pos[p.id]={x:cx+radius*Math.cos(a),y:cy+radius*Math.sin(a)};});
+  const tc={세트:'#4ecdc4',연관:'#f59e0b',유사:'#8b5cf6'};
+  let svg=`<svg style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none">`;
+  rels.forEach(r=>{if(pos[r.from]&&pos[r.to])svg+=`<line x1="${pos[r.from].x}" y1="${pos[r.from].y}" x2="${pos[r.to].x}" y2="${pos[r.to].y}" stroke="${tc[r.type]||'#333'}" stroke-width="1.5" ${r.type==='유사'?'stroke-dasharray="5,5"':''}/>`;});
+  svg+=`</svg>`;
+  let nh='';
+  nodes.forEach(p=>{const ps=pos[p.id];nh+=`<div onclick="openDetail('${p.id}')" style="position:absolute;left:${ps.x-45}px;top:${ps.y-14}px;padding:6px 12px;background:var(--card);border:1.5px solid var(--accent);border-radius:16px;font-size:11px;font-weight:400;cursor:pointer;white-space:nowrap;color:var(--accent);max-width:120px;overflow:hidden;text-overflow:ellipsis;transition:transform 0.2s" onmouseover="this.style.transform='scale(1.15)'" onmouseout="this.style.transform='scale(1)'" title="${esc(p.name)} (${esc(p.brand)})">${esc(p.name)}</div>`;});
+  canvas.innerHTML=svg+nh;
+  canvas.style.minHeight=(cy+radius+80)+'px';
+}
+
+// ═══ ACTIONS ═══
+function addPart(){
+  const name=document.getElementById('addName').value.trim();
+  if(!name){toast('부품명 입력');return;}
+  const brand=document.getElementById('addBrand').value;
+  const prefix={우방:'WB',다뉴브:'DN',IT:'IT',공용:'N',자판기:'VM',서비스:'SV'}[brand]||'N';
+  // 정확한 접두사 매칭으로 기존 최대 번호 + 1 채번 (충돌 방지)
+  const regex=new RegExp('^KS-'+prefix+'-(\\d+)$');
+  let maxNum=0;
+  PARTS.forEach(p=>{const m=p.id.match(regex);if(m){const n=parseInt(m[1]);if(n>maxNum)maxNum=n;}});
+  // SV-N- 형태도 체크
+  const regex2=new RegExp('^SV-'+prefix+'-(\\d+)$');
+  PARTS.forEach(p=>{const m=p.id.match(regex2);if(m){const n=parseInt(m[1]);if(n>maxNum)maxNum=n;}});
+  const np={
+    id:`KS-${prefix}-${String(maxNum+1).padStart(2,'0')}`, name, brand,
+    name_en:document.getElementById('addNameEn').value.trim(),
+    group:document.getElementById('addGroup').value.trim(),
+    device:document.getElementById('addDevice').value,
+    price_exec:document.getElementById('addExec').value.trim(),
+    price_bill:document.getElementById('addBill').value.trim(),
+    sap:'', tags:document.getElementById('addTags').value.trim()
+  };
+  PARTS.push(np);saveParts(PARTS);
+  addLog(np.id,'생성',`${np.name} (${np.brand})`);
+  syncToSheet(np);
+  toast(`${name} 등록 ✓`);render();
+}
+function deletePart(id){
+  if(!confirm('삭제합니까?'))return;
+  const p=PARTS.find(x=>x.id===id);
+  PARTS=PARTS.filter(x=>x.id!==id);saveParts(PARTS);
+  addLog(id,'삭제',p?p.name:'');
+  toast('삭제됨');render();
+}
+function handlePhotoUpload(input){
+  if(!input.files||!input.files[0]||!currentPart)return;
+  const reader=new FileReader();
+  reader.onload=function(e){
+    const img=new Image();
+    img.onload=function(){
+      const c=document.createElement('canvas');const maxW=800;
+      let w=img.width,h=img.height;if(w>maxW){h=h*(maxW/w);w=maxW;}
+      c.width=w;c.height=h;c.getContext('2d').drawImage(img,0,0,w,h);
+      const data=c.toDataURL('image/jpeg',0.7);
+      const arr=getPhotos(currentPart.id);
+      arr.push(data);            // 새 사진은 뒤에 추가 (대표는 첫번째 유지)
+      setPhotos(currentPart.id,arr);
+      uploadToDrive(currentPart.id,data);
+      addLog(currentPart.id,'사진',`사진 추가 (총 ${arr.length}장)`);
+      renderDetail();toast('사진 추가 ✓');
+    };img.src=e.target.result;
+  };reader.readAsDataURL(input.files[0]);
+  input.value='';
+}
+function deletePhoto(idx){
+  if(!currentPart)return;
+  if(!confirm('이 사진을 삭제할까요?'))return;
+  const arr=getPhotos(currentPart.id);
+  arr.splice(idx,1);
+  setPhotos(currentPart.id,arr);
+  if(photoSlide>=arr.length) photoSlide=Math.max(0,arr.length-1);
+  addLog(currentPart.id,'사진','사진 삭제');
+  renderDetail();toast('사진 삭제됨');
+}
+function setRepresentative(idx){
+  if(!currentPart)return;
+  const arr=getPhotos(currentPart.id);
+  if(idx<=0||idx>=arr.length)return;
+  const [pick]=arr.splice(idx,1);
+  arr.unshift(pick);            // 선택 사진을 맨 앞(대표)으로
+  setPhotos(currentPart.id,arr);
+  photoSlide=0;
+  renderDetail();toast('대표 사진 변경됨');
+}
+function slidePhoto(dir){
+  if(!currentPart)return;
+  const n=getPhotos(currentPart.id).length;
+  if(n<=1)return;
+  photoSlide=(photoSlide+dir+n)%n;
+  renderDetail();
+}
+function goSlide(i){
+  photoSlide=i;
+  renderDetail();
+}
+// ─── 누끼 딴 이미지 투명여백 자르고 가운데 정렬 ───
+function trimAndCenter(dataUrl){
+  return new Promise((resolve)=>{
+    const img=new Image();
+    img.onload=function(){
+      const w=img.width,h=img.height;
+      const cv=document.createElement('canvas');cv.width=w;cv.height=h;
+      const ctx=cv.getContext('2d');ctx.drawImage(img,0,0);
+      let data;
+      try{data=ctx.getImageData(0,0,w,h).data;}catch(e){resolve(dataUrl);return;}
+      let minX=w,minY=h,maxX=0,maxY=0,found=false;
+      const A=10; // 알파 임계값
+      for(let y=0;y<h;y++){
+        for(let x=0;x<w;x++){
+          if(data[(y*w+x)*4+3]>A){
+            found=true;
+            if(x<minX)minX=x;if(x>maxX)maxX=x;
+            if(y<minY)minY=y;if(y>maxY)maxY=y;
+          }
+        }
+      }
+      if(!found){resolve(dataUrl);return;}
+      const bw=maxX-minX+1, bh=maxY-minY+1;
+      const pad=Math.round(Math.max(bw,bh)*0.12); // 여백 12%
+      const side=Math.max(bw,bh)+pad*2;
+      const out=document.createElement('canvas');out.width=side;out.height=side;
+      const octx=out.getContext('2d');
+      const dx=Math.round((side-bw)/2), dy=Math.round((side-bh)/2);
+      octx.drawImage(img,minX,minY,bw,bh,dx,dy,bw,bh);
+      resolve(out.toDataURL('image/png'));
+    };
+    img.onerror=()=>resolve(dataUrl);
+    img.src=dataUrl;
+  });
+}
+// ─── 누끼 따기 (브라우저 내 무료 처리) ───
+let _bgRemovalLib=null;
+async function removeBg(idx){
+  if(!currentPart)return;
+  const arr=getPhotos(currentPart.id);
+  if(!arr[idx])return;
+  toast('누끼 따는 중... 첫 사용 시 모델 다운로드(수십초)');
+  try{
+    if(!_bgRemovalLib){
+      _bgRemovalLib=await import('https://esm.sh/@imgly/background-removal@1.5.8');
+    }
+    const fn=_bgRemovalLib.removeBackground||(_bgRemovalLib.default&&_bgRemovalLib.default.removeBackground);
+    if(!fn) throw new Error('removeBackground 함수 없음');
+    const blob=await fn(arr[idx]);
+    let dataUrl=await new Promise((res,rej)=>{const fr=new FileReader();fr.onload=()=>res(fr.result);fr.onerror=rej;fr.readAsDataURL(blob);});
+    dataUrl=await trimAndCenter(dataUrl); // 투명여백 자르고 가운데 정렬
+    arr[idx]=dataUrl;
+    setPhotos(currentPart.id,arr);
+    uploadToDrive(currentPart.id,dataUrl);
+    addLog(currentPart.id,'사진','누끼 처리');
+    renderDetail();toast('누끼 완료 ✓');
+  }catch(err){
+    console.error('누끼 오류:',err);
+    toast('누끼 실패: '+(err&&err.message?err.message:'알 수 없는 오류'));
+  }
+}
+function saveMemoAction(){
+  if(!currentPart)return;
+  const m=document.getElementById('memoArea').value;
+  setMemo(currentPart.id,m);toast('메모 저장 ✓');
+}
+function syncCurrentToSheet(){
+  if(!currentPart)return;syncToSheet({...currentPart,memo:getMemo(currentPart.id)});
+}
+function saveSettingsAction(){
+  saveSettingsData({scriptUrl:document.getElementById('setUrl').value.trim(),driveFolder:document.getElementById('setFolder').value.trim(),location:document.getElementById('setLocation').value.trim()});
+  toast('설정 저장 ✓');
+}
+async function syncToSheet(part){
+  const s=getSettings();if(!s.scriptUrl){toast('설정에서 Script URL 먼저 입력');return;}
+  try{
+    // text/plain 으로 보내 preflight 회피 → 응답 읽기 가능
+    const res=await fetch(s.scriptUrl,{method:'POST',body:JSON.stringify({action:'savePart',part:part})});
+    const r=await res.json();
+    if(r.ok) toast('시트 저장 완료 ✓ ('+(r.mode==='update'?'갱신':'추가')+')');
+    else toast('시트 오류: '+(r.error||'알수없음'));
+  }catch(e){toast('연결 실패: '+e.message);}
+}
+async function uploadToDrive(id,data){
+  const s=getSettings();
+  if(!s.scriptUrl||!s.driveFolder){
+    console.warn('Drive 업로드 스킵: scriptUrl=',s.scriptUrl,'driveFolder=',s.driveFolder);
+    return;
+  }
+  try{
+    toast('Drive 업로드 중...');
+    const res=await fetch(s.scriptUrl,{method:'POST',body:JSON.stringify({action:'uploadPhoto',partId:id,folderId:s.driveFolder,imageData:data})});
+    const r=await res.json();
+    if(r.ok&&r.url){ setPartPhotoUrl(id,r.url); toast('Drive 업로드 완료 ✓'); }
+    else { toast('Drive 업로드 실패: '+(r.error||'알 수 없음')); console.error('Drive 응답:',r); }
+  }catch(e){ toast('Drive 연결 실패: '+e.message); console.error('드라이브 업로드 실패',e); }
+}
+function setPartPhotoUrl(id,url){
+  const idx=PARTS.findIndex(x=>x.id===id);
+  if(idx>=0){PARTS[idx].photo_url=url;saveParts(PARTS);}
+}
+// 전체 부품을 시트에 한번에 동기화
+async function bulkSyncToSheet(){
+  const s=getSettings();if(!s.scriptUrl){toast('설정에서 Script URL 먼저 입력');return;}
+  toast('전체 동기화 중...');
+  try{
+    const res=await fetch(s.scriptUrl,{method:'POST',body:JSON.stringify({action:'bulkSync',parts:PARTS})});
+    const r=await res.json();
+    if(r.ok) toast('전체 '+r.count+'개 시트 동기화 완료 ✓');
+    else toast('오류: '+(r.error||'알수없음'));
+  }catch(e){toast('연결 실패: '+e.message);}
+}
+// 연결 테스트
+async function testConnection(){
+  const url=document.getElementById('setUrl').value.trim();
+  if(!url){toast('URL을 먼저 입력');return;}
+  toast('연결 테스트 중...');
+  try{
+    const res=await fetch(url,{method:'POST',body:JSON.stringify({action:'ping'})});
+    const r=await res.json();
+    if(r.ok) toast('✓ '+(r.msg||'연결 성공'));
+    else toast('응답은 왔으나 오류: '+(r.error||''));
+  }catch(e){toast('연결 실패: '+e.message+' (배포 액세스 권한 "모든 사용자" 확인)');}
+}
+function exportCSV(){
+  const h='id,name,name_en,brand,group,device,price_exec,price_bill,sap,tags';
+  const csvEsc=(v)=>'"'+String(v||'').replace(/"/g,'""')+'"';
+  const rows=PARTS.map(p=>[p.id,p.name,p.name_en||'',p.brand,p.group,p.device,p.price_exec,p.price_bill,p.sap,p.tags||''].map(csvEsc).join(','));
+  const blob=new Blob(['\uFEFF'+h+'\n'+rows.join('\n')],{type:'text/csv;charset=utf-8'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='parts_'+new Date().toISOString().slice(0,10)+'.csv';a.click();
+}
+function handleCSVImport(file){
+  if(!file)return;
+  const reader=new FileReader();
+  reader.onload=function(e){
+    const lines=e.target.result.split('\n').filter(l=>l.trim());
+    if(lines.length<2){toast('데이터 없음');return;}
+    const hd=lines[0].split(',').map(h=>h.trim().toLowerCase().replace(/"/g,''));
+    const fi=(keys)=>hd.findIndex(h=>keys.some(k=>h.includes(k)));
+    const ni=fi(['name','물품명','부품명']),bi=fi(['brand','브랜드']),ii=fi(['id','코드','카테고리코드']);
+    const di=fi(['device','기기']),gi=fi(['group','그룹']),ei=fi(['exec','실행가']),pi=fi(['bill','청구가']);
+    const si=fi(['sap']),ti=fi(['tags','태그']),eni=fi(['name_en','영어']);
+    const mi=fi(['memo','메모','설명','기능']);
+    let added=0,memoUpdated=0;
+    for(let i=1;i<lines.length;i++){
+      const c=lines[i].split(',').map(x=>x.trim().replace(/^"|"$/g,'').replace(/^\uFEFF/,''));
+      const name=ni>=0?c[ni]:'';if(!name||name.startsWith('--'))continue;
+      const id=ii>=0&&c[ii]?c[ii]:'NEW-'+Date.now()+'-'+i;
+      const memo=mi>=0?c[mi]:'';
+      // 기존 부품이면 memo만 추가
+      const existing=PARTS.find(p=>p.id===id);
+      if(existing){
+        if(memo){setMemo(id,memo);memoUpdated++;}
+        continue;
+      }
+      let brand=bi>=0?c[bi]:'';
+      if(!brand||brand==='KS'){if(name.includes('WB'))brand='우방';else if(name.includes('DN'))brand='다뉴브';else if(id.includes('VM'))brand='자판기';else if(id.includes('IT'))brand='IT';else brand='공용';}
+      if(brand==='WB')brand='우방';else if(brand==='DN'||brand==='DNW')brand='다뉴브';else if(brand==='VM')brand='자판기';else if(brand==='N')brand='공용';
+      PARTS.push({id,name,brand,name_en:eni>=0?c[eni]:'',group:gi>=0?c[gi]:'',device:di>=0?c[di]:'',price_exec:ei>=0?c[ei]:'',price_bill:pi>=0?c[pi]:'',sap:si>=0?c[si]:'',tags:ti>=0?c[ti]:''});
+      if(memo) setMemo(id,memo);
+      added++;
+    }
+    saveParts(PARTS);
+    let msg=`${added}개 추가`;
+    if(memoUpdated) msg+=` / 메모 ${memoUpdated}개 업데이트`;
+    toast(msg+' ✓');render();
+  };reader.readAsText(file,'UTF-8');
+}
+
+// ═══ INIT ═══
+render();
+</script>
+</body>
+</html>

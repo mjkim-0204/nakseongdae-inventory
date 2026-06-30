@@ -1,0 +1,13 @@
+{
+  "enabled": true,
+  "name": "대화 내용 메모장 업데이트",
+  "description": "버튼 클릭 시 최근 대화 내용을 vibe-log.md에 추가하고 Git 커밋합니다.",
+  "version": "1",
+  "when": {
+    "type": "userTriggered"
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "최근 대화에서 새로 나온 내용(이전에 vibe-log.md에 없는 것)을 요약해서 vibe-log.md 파일 맨 아래에 추가해줘. 날짜와 주제를 포함해서. 그리고 git add vibe-log.md && git commit 해줘."
+  }
+}

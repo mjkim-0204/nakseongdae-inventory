@@ -1,0 +1,13 @@
+{
+  "enabled": true,
+  "name": "노션 개발 로그 작성",
+  "description": "버튼 클릭 시 오늘 작업 내용을 노션 개발 로그 페이지에 자동 작성합니다.",
+  "version": "1",
+  "when": {
+    "type": "userTriggered"
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "Git 로그와 현재 프로젝트 상태를 확인하고, 노션 \"개발 로그\" 페이지에 오늘 날짜로 개발 로그를 작성해줘. devlog.md steering 규칙을 따라서 프로젝트명과 시간을 포함해줘. 이미 오늘 날짜 로그가 있으면 새로 만들지 말고 기존에 추가해줘."
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "enabled": true,
+  "name": "작업 완료 자동 요약",
+  "description": "AI가 작업을 끝낼 때마다 방금 무엇을 변경했는지 한줄로 요약해줍니다.",
+  "version": "1",
+  "when": {
+    "type": "agentStop"
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "방금 작업한 내용을 한줄로 요약해줘. 형식: \"✅ 요약: [변경 내용]\""
+  }
+}
